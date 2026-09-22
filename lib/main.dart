@@ -1,10 +1,100 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'organismo_certificador.dart';
+import 'package:dio/dio.dart';
+import 'package:dio_cookie_manager/dio_cookie_manager.dart';
+import 'package:cookie_jar/cookie_jar.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'Organismo Certificador/organismo_certificador.dart';
+import 'Centro Evaluador/centro_evaluador_admin.dart';
+import 'evaluador.dart';
+import 'candidato.dart';
 
-void main() {
+/// Cliente HTTP y cookie jar compartidos por toda la app.
+late Dio dio;
+late PersistCookieJar cookieJar;
+
+const String _baseUrl = 'https://ocmax.mx';
+
+Future<void> _initDio() async {
+  final appDocDir = await getApplicationDocumentsDirectory();
+  cookieJar = PersistCookieJar(
+    ignoreExpires: false,
+    storage: FileStorage('${appDocDir.path}/.cookies/'),
+  );
+
+  dio = Dio(
+    BaseOptions(
+      baseUrl: _baseUrl,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Origin': _baseUrl,
+        'Referer': '$_baseUrl/',
+      },
+      validateStatus: (status) => status != null && status < 500,
+    ),
+  );
+
+  dio.interceptors.add(CookieManager(cookieJar));
+
+  dio.interceptors.add(
+    InterceptorsWrapper(
+      onRequest: (options, handler) async {
+        final cookies = await cookieJar.loadForRequest(options.uri);
+        debugPrint('--- COOKIES ENVIADAS a ${options.path} ---');
+        if (cookies.isEmpty) {
+          debugPrint('  (ninguna cookie guardada todavía)');
+        }
+        for (final c in cookies) {
+          final preview = c.value.length > 20
+              ? c.value.substring(0, 20)
+              : c.value;
+          debugPrint('  ${c.name} = $preview...');
+        }
+        handler.next(options);
+      },
+    ),
+  );
+
+  dio.interceptors.add(
+    InterceptorsWrapper(
+      onRequest: (options, handler) async {
+        final cookies = await cookieJar.loadForRequest(Uri.parse(_baseUrl));
+        final xsrfCookie = cookies.where((c) => c.name == 'XSRF-TOKEN');
+        if (xsrfCookie.isNotEmpty) {
+          options.headers['X-XSRF-TOKEN'] = Uri.decodeComponent(
+            xsrfCookie.first.value,
+          );
+        }
+        handler.next(options);
+      },
+    ),
+  );
+}
+
+Future<void> _primeCsrfCookie() async {
+  try {
+    final response = await dio.get(
+      '/api/v1/centers-evaluators/requests/get',
+      queryParameters: {'page': 1, 'per_page': 1},
+    );
+    debugPrint('--- CSRF COOKIE RESPONSE ---');
+    debugPrint('Status: ${response.statusCode}');
+    debugPrint('Set-Cookie headers: ${response.headers['set-cookie']}');
+  } catch (e) {
+    debugPrint('No se pudo precargar la cookie CSRF: $e');
+  }
+}
+
+Future<void> clearSession() async {
+  await cookieJar.deleteAll();
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _initDio();
   runApp(const MyApp());
 }
 
@@ -17,11 +107,10 @@ class MyApp extends StatelessWidget {
       title: 'OC MAX Login',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // Definimos la semilla de color basada en el azul oscuro del logo
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF0A2342),
           primary: const Color(0xFF0A2342),
-          secondary: const Color(0xFF38C9D6), // Cyan del logo
+          secondary: const Color(0xFF38C9D6),
         ),
         useMaterial3: true,
         inputDecorationTheme: InputDecorationTheme(
@@ -62,6 +151,46 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _rememberMe = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials();
+  }
+
+  /// Rellena el formulario con las credenciales guardadas
+  /// de la última vez, si es que el usuario eligió recordarlas.
+  Future<void> _loadSavedCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedIdentifier = prefs.getString('saved_identifier');
+    final savedPassword = prefs.getString('saved_password');
+    final rememberMe = prefs.getBool('remember_me') ?? true;
+
+    if (savedIdentifier != null) {
+      _emailController.text = savedIdentifier;
+    }
+    if (savedPassword != null) {
+      _passwordController.text = savedPassword;
+    }
+    setState(() => _rememberMe = rememberMe);
+  }
+
+  Future<void> _saveOrClearCredentials(
+    String identifier,
+    String password,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('remember_me', _rememberMe);
+
+    if (_rememberMe) {
+      await prefs.setString('saved_identifier', identifier);
+      await prefs.setString('saved_password', password);
+    } else {
+      await prefs.remove('saved_identifier');
+      await prefs.remove('saved_password');
+    }
+  }
 
   void _handleLogin() async {
     final identifier = _emailController.text.trim();
@@ -76,42 +205,77 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
 
-    final url = Uri.parse('https://ocmax.mx/api/v1/auth/login');
-    final requestBody = jsonEncode({
-      'identifier': identifier,
-      'password': password,
-    });
+    await _primeCsrfCookie();
 
-    // LOG: lo que se envía
+    final requestBody = {'identifier': identifier, 'password': password};
+
     debugPrint('--- LOGIN REQUEST ---');
-    debugPrint('URL: $url');
-    debugPrint('Body: $requestBody');
+    debugPrint('URL: $_baseUrl/api/v1/auth/login');
+    debugPrint('Body: ${jsonEncode(requestBody)}');
 
     try {
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: requestBody,
-      );
+      final response = await dio.post('/api/v1/auth/login', data: requestBody);
 
-      // LOG: lo que responde
       debugPrint('--- LOGIN RESPONSE ---');
       debugPrint('Status code: ${response.statusCode}');
-      debugPrint('Body: ${response.body}');
+      debugPrint('Body: ${response.data}');
 
-      final Map<String, dynamic> body = jsonDecode(response.body);
+      final body = response.data as Map<String, dynamic>;
 
       if (response.statusCode == 200 && body['success'] == true) {
         final data = body['data'] as Map<String, dynamic>;
         final user = data['user'] as Map<String, dynamic>;
         final institution = user['institution'] as Map<String, dynamic>?;
         final logoUrl = institution?['logo_url'] as String?;
+        final role = user['role'] as String? ?? '';
+        final userName = user['username'] as String? ?? '';
+
+        // Guardamos (o borramos) las credenciales según "Recordarme",
+        // y el logo para mostrarlo en la siguiente pantalla.
+        await _saveOrClearCredentials(identifier, password);
+        final prefs = await SharedPreferences.getInstance();
+        if (logoUrl != null) await prefs.setString('logo_url', logoUrl);
 
         if (!mounted) return;
 
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => OrganismoScreen(logoUrl: logoUrl)),
-        );
+        // Según el rol del usuario, se manda a una pantalla distinta.
+        if (role == 'CE Super Admin') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => CentroEvaluadorHomeScreen(
+                logoUrl: logoUrl,
+                userName: userName,
+                role: role,
+              ),
+            ),
+          );
+        } else if (role == 'Evaluador') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => EvaluadorScreen(
+                logoUrl: logoUrl,
+                userName: userName,
+                role: role,
+              ),
+            ),
+          );
+        } else if (role == 'Candidato') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => CandidatoScreen(
+                logoUrl: logoUrl,
+                userName: userName,
+                role: role,
+              ),
+            ),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => OrganismoScreen(logoUrl: logoUrl),
+            ),
+          );
+        }
       } else {
         final message = body['message'] ?? 'No se pudo iniciar sesión';
         if (mounted) {
@@ -145,19 +309,13 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Espaciador superior para centrar visualmente
               SizedBox(height: size.height * 0.08),
-
-              // LOGO OC MAX
               Image.asset(
                 'assets/img/NORMAL.png',
                 height: 140,
                 fit: BoxFit.contain,
               ),
-
               const SizedBox(height: 48),
-
-              // TÍTULO DE BIENVENIDA
               Text(
                 'Iniciar Sesión',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
@@ -166,9 +324,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 textAlign: TextAlign.center,
               ),
-
               const SizedBox(height: 8),
-
               Text(
                 'Ingresa tus credenciales para acceder.',
                 style: Theme.of(
@@ -176,10 +332,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ).textTheme.bodyLarge?.copyWith(color: Colors.grey.shade600),
                 textAlign: TextAlign.center,
               ),
-
               const SizedBox(height: 40),
-
-              // CAMPO DE EMAIL
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
@@ -191,10 +344,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 20),
-
-              // CAMPO DE CONTRASEÑA
               TextField(
                 controller: _passwordController,
                 obscureText: _obscurePassword,
@@ -216,24 +366,39 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
 
-              const SizedBox(height: 12),
-
-              // OLVIDASTE TU CONTRASEÑA
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: () {},
-                  child: const Text(
-                    '¿Olvidaste tu contraseña?',
-                    style: TextStyle(color: Color(0xFF1B6CA8)),
+              // RECORDARME
+              Row(
+                children: [
+                  SizedBox(
+                    height: 24,
+                    width: 24,
+                    child: Checkbox(
+                      value: _rememberMe,
+                      activeColor: const Color(0xFF0A2342),
+                      onChanged: (value) {
+                        setState(() => _rememberMe = value ?? true);
+                      },
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Recordar mis datos',
+                    style: TextStyle(fontSize: 13, color: Colors.black87),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {},
+                    child: const Text(
+                      '¿Olvidaste tu contraseña?',
+                      style: TextStyle(color: Color(0xFF1B6CA8), fontSize: 13),
+                    ),
+                  ),
+                ],
               ),
 
-              const SizedBox(height: 32),
-
-              // BOTÓN DE LOGIN
+              const SizedBox(height: 24),
               SizedBox(
                 height: 56,
                 child: ElevatedButton(
@@ -267,10 +432,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                 ),
               ),
-
               const SizedBox(height: 24),
-
-              // PIE DE PÁGINA CON LA MARCA
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
