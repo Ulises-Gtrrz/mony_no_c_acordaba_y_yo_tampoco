@@ -126,6 +126,39 @@ class _CandidatosScreenState extends State<CandidatosScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Extrae el uuid del proceso a partir de una entrada de `evaluations`
+  /// en la lista de candidatos.
+  ///
+  /// NOTA: el endpoint `/api/v1/candidates/requests/get` no fue
+  /// confirmado con un ejemplo de JSON para el campo exacto que trae el
+  /// uuid del proceso dentro de cada evaluación. Se intentan varias
+  /// llaves comunes (`process_uuid`, `uuid`, `process.uuid`). Si tu
+  /// backend usa otro nombre, ajústalo aquí.
+  String? _processUuidFrom(Map<String, dynamic> evaluation) {
+    final direct =
+        evaluation['process_uuid'] ??
+        evaluation['request_uuid'] ??
+        evaluation['uuid'];
+    if (direct != null) return direct.toString();
+
+    final nestedProcess = evaluation['process'] as Map<String, dynamic>?;
+    if (nestedProcess != null && nestedProcess['uuid'] != null) {
+      return nestedProcess['uuid'].toString();
+    }
+    return null;
+  }
+
+  void _openProceso(String processUuid) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProcesoDetalleScreen(
+          processUuid: processUuid,
+          logoUrl: widget.logoUrl,
+        ),
+      ),
+    );
+  }
+
   void _openProfileDialog(Map<String, dynamic> data) {
     final name = data['name'] as String? ?? '';
     final email = data['email'] as String? ?? '';
@@ -305,15 +338,7 @@ class _CandidatosScreenState extends State<CandidatosScreen> {
                                             Navigator.of(
                                               context,
                                             ).pop(); // cierra el diálogo
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    ProcesoDetalleScreen(
-                                                      processUuid: processUuid,
-                                                      logoUrl: widget.logoUrl,
-                                                    ),
-                                              ),
-                                            );
+                                            _openProceso(processUuid);
                                           },
                                           style: OutlinedButton.styleFrom(
                                             foregroundColor:
@@ -596,57 +621,83 @@ class _CandidatosScreenState extends State<CandidatosScreen> {
                       evaluation['request_status']?.toString() ?? '';
                   final statusCode = evaluation['request_status_code']
                       ?.toString();
+                  final processUuid = _processUuidFrom(evaluation);
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Row(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                standard,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500,
-                                  color: OCColors.darkBlue,
-                                ),
-                              ),
-                              if (ceEi.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: Text(
-                                    ceEi,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    standard,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: OCColors.darkBlue,
                                     ),
                                   ),
+                                  if (ceEi.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Text(
+                                        ceEi,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if (statusName.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
                                 ),
-                            ],
-                          ),
+                                decoration: BoxDecoration(
+                                  color: _colorForStatus(
+                                    statusCode,
+                                  ).withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  statusName,
+                                  style: TextStyle(
+                                    color: _colorForStatus(statusCode),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        if (statusName.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _colorForStatus(
-                                statusCode,
-                              ).withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              statusName,
-                              style: TextStyle(
-                                color: _colorForStatus(statusCode),
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
+                        if (processUuid != null)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: () => _openProceso(processUuid),
+                              style: TextButton.styleFrom(
+                                foregroundColor: OCColors.mediumBlue,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              icon: const Icon(Icons.folder_open, size: 14),
+                              label: const Text(
+                                'Ver proceso',
+                                style: TextStyle(fontSize: 12),
                               ),
                             ),
                           ),

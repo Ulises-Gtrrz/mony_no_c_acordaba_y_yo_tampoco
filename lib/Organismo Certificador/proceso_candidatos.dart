@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../main.dart';
 import 'candidatos.dart';
+import 'portafolio_evidencias_screen.dart';
 
 class ProcesoDetalleScreen extends StatefulWidget {
   final String processUuid;
@@ -132,6 +133,18 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
     } finally {
       if (mounted) setState(() => _openingDocId = null);
     }
+  }
+
+  void _openPortafolio(String? logoUrl) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PortafolioEvidenciasScreen(
+          processUuid: widget.processUuid,
+          logoUrl: logoUrl ?? widget.logoUrl,
+        ),
+      ),
+    );
   }
 
   void _showSnack(String message) {
@@ -361,6 +374,7 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
             _sectionTitle('Etapas del proceso'),
             _buildStepsTimeline(
               (processSteps['steps'] as List<dynamic>?) ?? [],
+              logoUrl: centerLogoUrl,
             ),
           ],
 
@@ -494,14 +508,22 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
     );
   }
 
-  Widget _buildStepsTimeline(List<dynamic> steps) {
+  Widget _buildStepsTimeline(List<dynamic> steps, {String? logoUrl}) {
     return Column(
       children: steps.map((s) {
         final step = s as Map<String, dynamic>;
         final statusCode = step['status'] as String?;
+        final code = step['code'] as String?;
+        final implemented = step['implemented'] as bool? ?? false;
         final name = step['name']?.toString() ?? '';
         final reason = step['reason']?.toString() ?? '';
         final number = step['number']?.toString() ?? '';
+
+        // El Portafolio de evidencias tiene pantalla propia. Se habilita
+        // el toque en cuanto el backend marca el paso como implementado,
+        // sin importar si ya está completado o sigue en progreso.
+        final isPortafolio = code == 'evidence_portfolio';
+        final canOpenPortafolio = isPortafolio && implemented;
 
         Color color;
         IconData icon;
@@ -523,6 +545,55 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
             icon = Icons.radio_button_unchecked;
         }
 
+        final content = Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: OCColors.cardBorder),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$number. $name',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: OCColors.darkBlue,
+                      ),
+                    ),
+                    if (reason.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          reason,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (canOpenPortafolio)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8, top: 2),
+                  child: Icon(
+                    Icons.chevron_right,
+                    size: 20,
+                    color: Colors.grey.shade400,
+                  ),
+                ),
+            ],
+          ),
+        );
+
         return Padding(
           padding: const EdgeInsets.only(bottom: 10.0),
           child: Row(
@@ -539,38 +610,13 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: OCColors.cardBorder),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '$number. $name',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: OCColors.darkBlue,
-                        ),
-                      ),
-                      if (reason.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            reason,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+                child: canOpenPortafolio
+                    ? InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => _openPortafolio(logoUrl),
+                        child: content,
+                      )
+                    : content,
               ),
             ],
           ),
