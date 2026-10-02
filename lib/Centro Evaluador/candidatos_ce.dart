@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../main.dart'; // reutiliza el cliente `dio` global
 import '../../Organismo Certificador/candidatos.dart' show OCColors;
+import 'proceso_ce.dart';
 
 class CandidatosCEScreen extends StatefulWidget {
   final String? logoUrl;
@@ -243,56 +244,82 @@ class _CandidatosCEScreenState extends State<CandidatosCEScreen> {
                 final statusCode = evaluation['request_status_code']
                     ?.toString();
 
+                final processUuid = _processUuidFrom(evaluation);
+
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Column(
                     children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              standard,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: OCColors.darkBlue,
-                              ),
-                            ),
-                            if (ceEi.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  ceEi,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey.shade600,
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  standard,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: OCColors.darkBlue,
                                   ),
                                 ),
+                                if (ceEi.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      ceEi,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          if (statusName.isNotEmpty)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
                               ),
-                          ],
-                        ),
+                              decoration: BoxDecoration(
+                                color: _colorForStatus(
+                                  statusCode,
+                                ).withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                statusName,
+                                style: TextStyle(
+                                  color: _colorForStatus(statusCode),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      if (statusName.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _colorForStatus(
-                              statusCode,
-                            ).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            statusName,
-                            style: TextStyle(
-                              color: _colorForStatus(statusCode),
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                      if (processUuid != null)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            onPressed: () => _openProceso(processUuid),
+                            style: TextButton.styleFrom(
+                              foregroundColor: OCColors.mediumBlue,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            icon: const Icon(Icons.folder_open, size: 14),
+                            label: const Text(
+                              'Ver proceso',
+                              style: TextStyle(fontSize: 12),
                             ),
                           ),
                         ),
@@ -302,6 +329,30 @@ class _CandidatosCEScreenState extends State<CandidatosCEScreen> {
               }),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Extrae el uuid del proceso de una entrada de `evaluations`.
+  String? _processUuidFrom(Map<String, dynamic> evaluation) {
+    final direct =
+        evaluation['process_uuid'] ??
+        evaluation['candidate_process_uuid'] ??
+        evaluation['request_uuid'] ??
+        evaluation['uuid'];
+    if (direct != null) return direct.toString();
+
+    final nested = evaluation['process'] as Map<String, dynamic>?;
+    return nested?['uuid']?.toString();
+  }
+
+  void _openProceso(String processUuid) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProcesoDetalleCEScreen(
+          processUuid: processUuid,
+          logoUrl: widget.logoUrl,
         ),
       ),
     );

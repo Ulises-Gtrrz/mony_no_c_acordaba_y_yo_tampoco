@@ -1,30 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../main.dart';
-import 'candidatos.dart';
-import 'portafolio_evidencias_screen.dart';
-import 'portafolio_oc.dart';
+import '../../main.dart';
+import '../../Organismo Certificador/candidatos.dart' show OCColors;
+import 'portafolio_ce.dart';
+import 'proceso_pago.dart';
 
-class ProcesoDetalleScreen extends StatefulWidget {
+class ProcesoDetalleCEScreen extends StatefulWidget {
   final String processUuid;
   final String? logoUrl;
 
-  /// true cuando el Organismo Certificador revisa el portafolio
-  /// (en vez de la vista del candidato).
-  final bool esRevisor;
-
-  const ProcesoDetalleScreen({
+  const ProcesoDetalleCEScreen({
     super.key,
     required this.processUuid,
     this.logoUrl,
-    this.esRevisor = false,
   });
 
   @override
-  State<ProcesoDetalleScreen> createState() => _ProcesoDetalleScreenState();
+  State<ProcesoDetalleCEScreen> createState() => _ProcesoDetalleCEScreenState();
 }
 
-class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
+class _ProcesoDetalleCEScreenState extends State<ProcesoDetalleCEScreen> {
   Map<String, dynamic>? _data;
   bool _isLoading = true;
   String? _errorMessage;
@@ -145,17 +140,26 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => widget.esRevisor
-            ? PortafolioOCScreen(
-                processUuid: widget.processUuid,
-                logoUrl: logoUrl ?? widget.logoUrl,
-              )
-            : PortafolioEvidenciasScreen(
-                processUuid: widget.processUuid,
-                logoUrl: logoUrl ?? widget.logoUrl,
-              ),
+        builder: (_) => PortafolioEvidenciasScreen(
+          processUuid: widget.processUuid,
+          logoUrl: logoUrl ?? widget.logoUrl,
+        ),
       ),
     );
+  }
+
+  Future<void> _openPago() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ComprobantePagoScreen(
+          processUuid: widget.processUuid,
+          payment: (_data?['payment'] as Map<String, dynamic>?) ?? {},
+        ),
+      ),
+    );
+    // Al volver, refresca por si cambió el estatus del pago
+    if (mounted) _fetchDetalle();
   }
 
   void _showSnack(String message) {
@@ -174,7 +178,7 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         title: const Text(
-          'Expediente del proceso',
+          'Expediente del proceso CE',
           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
         ),
         actions: [
@@ -530,11 +534,16 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
         final reason = step['reason']?.toString() ?? '';
         final number = step['number']?.toString() ?? '';
 
-        // El Portafolio de evidencias tiene pantalla propia. Se habilita
-        // el toque en cuanto el backend marca el paso como implementado,
-        // sin importar si ya está completado o sigue en progreso.
+        // Pasos con pantalla propia. Se habilita el toque en cuanto el
+        // backend marca el paso como implementado, sin importar si ya
+        // está completado o sigue en progreso.
         final isPortafolio = code == 'evidence_portfolio';
         final canOpenPortafolio = isPortafolio && implemented;
+
+        final isPayment = code == 'payment';
+        final canOpenPayment = isPayment && implemented;
+
+        final canNavigate = canOpenPortafolio || canOpenPayment;
 
         Color color;
         IconData icon;
@@ -592,7 +601,7 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
                   ],
                 ),
               ),
-              if (canOpenPortafolio)
+              if (canNavigate)
                 Padding(
                   padding: const EdgeInsets.only(left: 8, top: 2),
                   child: Icon(
@@ -621,10 +630,12 @@ class _ProcesoDetalleScreenState extends State<ProcesoDetalleScreen> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: canOpenPortafolio
+                child: canNavigate
                     ? InkWell(
                         borderRadius: BorderRadius.circular(8),
-                        onTap: () => _openPortafolio(logoUrl),
+                        onTap: canOpenPayment
+                            ? _openPago
+                            : () => _openPortafolio(logoUrl),
                         child: content,
                       )
                     : content,

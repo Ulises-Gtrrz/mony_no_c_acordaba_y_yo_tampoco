@@ -9,6 +9,7 @@ import 'Organismo Certificador/organismo_certificador.dart';
 import 'Centro Evaluador/centro_evaluador_admin.dart';
 import 'evaluador.dart';
 import 'candidato.dart';
+import 'formulario.dart';
 
 /// Cliente HTTP y cookie jar compartidos por toda la app.
 late Dio dio;
@@ -430,6 +431,34 @@ class _LoginScreenState extends State<LoginScreen> {
                             letterSpacing: 1.2,
                           ),
                         ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 56,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const FormScreen()),
+                    );
+                  },
+                  icon: const Icon(Icons.person_add_alt_1_outlined),
+                  label: const Text(
+                    'REGISTRAR EMPRESA/PERSONA',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF0A2342),
+                    side: const BorderSide(color: Color(0xFF0A2342)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 24),

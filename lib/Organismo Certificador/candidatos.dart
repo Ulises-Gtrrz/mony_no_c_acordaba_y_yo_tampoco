@@ -154,6 +154,7 @@ class _CandidatosScreenState extends State<CandidatosScreen> {
         builder: (_) => ProcesoDetalleScreen(
           processUuid: processUuid,
           logoUrl: widget.logoUrl,
+          esRevisor: true,
         ),
       ),
     );

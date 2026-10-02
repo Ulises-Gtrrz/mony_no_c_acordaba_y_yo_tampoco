@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../Organismo Certificador/candidatos.dart' show OCColors;
-import 'Organismo Certificador/proceso_candidatos.dart';
+import 'Centro Evaluador/proceso_ce.dart';
 
 class EvaluadorScreen extends StatefulWidget {
   final String? logoUrl;
@@ -91,7 +91,7 @@ class _EvaluadorScreenState extends State<EvaluadorScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         title: const Text(
-          'Gestión de Candidatos',
+          'Gestión de Candidatos pta',
           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
         ),
         actions: [
@@ -322,7 +322,7 @@ class _EvaluadorScreenState extends State<EvaluadorScreen> {
                       : () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => ProcesoDetalleScreen(
+                              builder: (_) => ProcesoDetalleCEScreen(
                                 processUuid: processUuid,
                                 logoUrl: widget.logoUrl,
                               ),

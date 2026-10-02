@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../Organismo Certificador/candidatos.dart';
 import 'acreditacion_detalle.dart';
+import 'candidatos_ce.dart';
 import 'nueva_acreditacion.dart';
 
 class CentroEvaluadorHomeScreen extends StatefulWidget {
@@ -263,7 +264,7 @@ class _CentroEvaluadorHomeScreenState extends State<CentroEvaluadorHomeScreen> {
               onPressed: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => CandidatosScreen(logoUrl: widget.logoUrl),
+                    builder: (_) => CandidatosCEScreen(logoUrl: widget.logoUrl),
                   ),
                 );
               },
