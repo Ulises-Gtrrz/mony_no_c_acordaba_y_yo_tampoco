@@ -103,6 +103,7 @@ flutter:
     - assets/img/Platino.png
     - assets/img/Bronce.png
     - assets/img/Platino_Max.png
+    - assets/img/mony.png
     - .env
 
     

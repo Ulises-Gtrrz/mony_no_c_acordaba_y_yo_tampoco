@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../main.dart';
@@ -19,6 +20,7 @@ class ComprobantePagoScreen extends StatefulWidget {
 
 class _ComprobantePagoScreenState extends State<ComprobantePagoScreen> {
   bool _isOpeningReceipt = false;
+  bool _isProcessing = false;
 
   Map<String, dynamic>? get _status =>
       widget.payment['status'] as Map<String, dynamic>?;
@@ -90,7 +92,62 @@ class _ComprobantePagoScreenState extends State<ComprobantePagoScreen> {
       confirmLabel: 'Validar',
     );
     if (ok != true) return;
-    _showSnack('Pendiente de conectar con el endpoint de validación');
+    await _enviarDictamen(
+      'validate',
+      mensajeOk: 'Pago validado correctamente',
+    );
+  }
+
+  /// `POST /candidates/processes/{uuid}/payment/{validate|reject}`.
+  /// Al terminar bien regresa a la pantalla del proceso, que se refresca sola.
+  Future<void> _enviarDictamen(
+    String accion, {
+    Map<String, dynamic>? body,
+    required String mensajeOk,
+  }) async {
+    if (_isProcessing) return;
+    setState(() => _isProcessing = true);
+
+    final path =
+        '/api/v1/candidates/processes/${widget.processUuid}/payment/$accion';
+
+    try {
+      final response = await dio.post(path, data: body);
+      final data = response.data;
+      final success = data is Map && data['success'] == true;
+
+      if (response.statusCode != null &&
+          response.statusCode! >= 200 &&
+          response.statusCode! < 300 &&
+          success) {
+        _showSnack(mensajeOk);
+        if (mounted) Navigator.pop(context);
+      } else if (response.statusCode == 401) {
+        await clearSession();
+        _showSnack('Tu sesión expiró. Vuelve a iniciar sesión.');
+      } else {
+        _showSnack(_mensajeError(response));
+      }
+    } catch (e) {
+      debugPrint('---PAGO $accion ERROR---');
+      debugPrint(e.toString());
+      _showSnack('Error de conexión: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  String _mensajeError(Response<dynamic> res) {
+    final body = res.data;
+    if (body is Map) {
+      final errors = body['errors'];
+      if (errors is Map && errors.isNotEmpty) {
+        final primero = errors.values.first;
+        if (primero is List && primero.isNotEmpty) return '${primero.first}';
+      }
+      if (body['message'] != null) return '${body['message']}';
+    }
+    return 'No se pudo completar la acción (${res.statusCode})';
   }
 
   Future<void> _rechazarComprobante() async {
@@ -123,7 +180,11 @@ class _ComprobantePagoScreenState extends State<ComprobantePagoScreen> {
       ),
     );
     if (note == null || note.isEmpty) return;
-    _showSnack('Pendiente de conectar con el endpoint de rechazo');
+    await _enviarDictamen(
+      'reject',
+      body: {'reason': note},
+      mensajeOk: 'Comprobante rechazado',
+    );
   }
 
   Future<bool?> _confirm({
@@ -423,7 +484,9 @@ class _ComprobantePagoScreenState extends State<ComprobantePagoScreen> {
                             SizedBox(
                               width: double.infinity,
                               child: OutlinedButton(
-                                onPressed: _rechazarComprobante,
+                                onPressed: _isProcessing
+                                    ? null
+                                    : _rechazarComprobante,
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: const Color(0xFFC62828),
                                   side: const BorderSide(
@@ -445,7 +508,7 @@ class _ComprobantePagoScreenState extends State<ComprobantePagoScreen> {
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton(
-                                onPressed: _validarPago,
+                                onPressed: _isProcessing ? null : _validarPago,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: OCColors.mediumBlue,
                                   foregroundColor: Colors.white,

@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
 import 'main.dart' show dio;
+// Ajusta esta importación a la ruta real donde tengas definidos los OCColors
+import '../Organismo Certificador/candidatos.dart' show OCColors;
 
 class _RepCtrl {
   final nombre = TextEditingController();
@@ -47,6 +49,10 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
   final _municipioCtrl = TextEditingController();
   final _estadoCtrl = TextEditingController();
   bool _domicilioManual = false;
+  bool _buscandoCp = false;
+  String? _cpError;
+  List<String> _colonias = [];
+  String? _coloniaSel;
 
   // Representantes
   final _director = _RepCtrl();
@@ -66,7 +72,14 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
   bool _enviando = false;
 
   @override
+  void initState() {
+    super.initState();
+    _cpCtrl.addListener(_onCpChanged);
+  }
+
+  @override
   void dispose() {
+    _cpCtrl.removeListener(_onCpChanged);
     for (final c in [
       _razonSocialCtrl,
       _nombreComercialCtrl,
@@ -88,6 +101,87 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
     _legal.dispose();
     _tecnico.dispose();
     super.dispose();
+  }
+
+  // ---------- Lógica de CP ----------
+  void _onCpChanged() {
+    final cp = _cpCtrl.text.trim();
+    if (cp.length != 5) {
+      if (_colonias.isNotEmpty ||
+          _municipioCtrl.text.isNotEmpty ||
+          _estadoCtrl.text.isNotEmpty) {
+        _limpiarDatosCp();
+      }
+      if (_cpError != null) setState(() => _cpError = null);
+      return;
+    }
+    _buscarCp(cp);
+  }
+
+  void _limpiarDatosCp() {
+    setState(() {
+      _colonias = [];
+      _coloniaSel = null;
+      _coloniaCtrl.clear();
+      _municipioCtrl.clear();
+      _estadoCtrl.clear();
+      _cpError = null;
+    });
+  }
+
+  Future<void> _buscarCp(String cp) async {
+    if (_buscandoCp) return;
+    setState(() {
+      _buscandoCp = true;
+      _cpError = null;
+    });
+    try {
+      final res = await dio.get('/api/v1/zip-codes/$cp');
+      if (!mounted) return;
+
+      final body = res.data;
+      if (body is! Map || body['success'] != true) {
+        setState(() {
+          _cpError = 'No encontramos información para ese CP';
+          _colonias = [];
+        });
+        return;
+      }
+
+      final data = body['data'] as Map;
+      final state = data['state']?['name'] as String? ?? '';
+      final municipality = data['municipality']?['name'] as String? ?? '';
+      final settlements =
+          (data['settlements'] as List?)?.cast<Map>() ?? <Map>[];
+
+      final nombres = settlements
+          .map((s) => (s['name'] as String? ?? '').trim())
+          .where((n) => n.isNotEmpty)
+          .toList();
+
+      setState(() {
+        _estadoCtrl.text = state.toUpperCase();
+        _municipioCtrl.text = municipality.toUpperCase();
+        _colonias = nombres;
+        if (nombres.length == 1) {
+          _coloniaSel = nombres.first;
+          _coloniaCtrl.text = nombres.first;
+        } else {
+          _coloniaSel = null;
+          _coloniaCtrl.clear();
+        }
+        _cpError = null;
+      });
+    } on DioException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cpError = e.response?.statusCode == 404
+            ? 'Código postal no encontrado'
+            : 'No se pudo consultar el CP. Intenta de nuevo.';
+      });
+    } finally {
+      if (mounted) setState(() => _buscandoCp = false);
+    }
   }
 
   // ---------- Validadores ----------
@@ -123,7 +217,39 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
         : 'Debe tener 10 dígitos';
   }
 
-  // ---------- Widgets reutilizables ----------
+  // ---------- Widgets de UI Mejorados ----------
+
+  // Estilo base para inputs
+  InputDecoration _inputDecoration({String? label, Widget? suffixIcon}) {
+    return InputDecoration(
+      labelText: label,
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: OCColors.cardBorder, width: 1),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: OCColors.cardBorder, width: 1),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: OCColors.mediumBlue, width: 2),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 2),
+      ),
+    );
+  }
+
   Widget _campo(
     String label,
     TextEditingController controller, {
@@ -135,31 +261,34 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
     TextCapitalization capitalization = TextCapitalization.none,
     Widget? suffixIcon,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: controller,
-          validator: validator,
-          keyboardType: keyboardType,
-          maxLength: maxLength,
-          inputFormatters: formatters,
-          textCapitalization: capitalization,
-          decoration: InputDecoration(
-            hintText: hint,
-            counterText: '',
-            isDense: true,
-            suffixIcon: suffixIcon,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 14,
+    return TextFormField(
+      controller: controller,
+      validator: validator,
+      keyboardType: keyboardType,
+      maxLength: maxLength,
+      inputFormatters: formatters,
+      textCapitalization: capitalization,
+      decoration: _inputDecoration(label: label, suffixIcon: suffixIcon),
+    );
+  }
+
+  Widget _seccionTitulo(String texto, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16, top: 8),
+      child: Row(
+        children: [
+          Icon(icon, color: OCColors.mediumBlue, size: 24),
+          const SizedBox(width: 10),
+          Text(
+            texto,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: OCColors.darkBlue,
             ),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -180,9 +309,7 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
             );
           }
           final items = [...hijos];
-          while (items.length < columnas) {
-            items.add(const SizedBox());
-          }
+          while (items.length < columnas) items.add(const SizedBox());
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -197,57 +324,53 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
     );
   }
 
-  Widget _titulo(String texto) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: Text(
-      texto,
-      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-    ),
-  );
-
   Widget _representante(String titulo, _RepCtrl r) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(10),
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: OCColors.cardBorder),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            titulo,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-          ),
-          const SizedBox(height: 12),
-          _fila([
-            _campo('Nombre completo', r.nombre, validator: _req),
-            _campo(
-              'Correo',
-              r.correo,
-              validator: _emailVal,
-              keyboardType: TextInputType.emailAddress,
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              titulo,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: OCColors.darkBlue,
+              ),
             ),
-          ]),
-          _fila([
-            _campo(
-              'RFC',
-              r.rfc,
-              validator: _rfcVal,
-              maxLength: 13,
-              capitalization: TextCapitalization.characters,
-            ),
-            _campo(
-              'CURP',
-              r.curp,
-              validator: _curpVal,
-              maxLength: 18,
-              capitalization: TextCapitalization.characters,
-            ),
-          ]),
-          _fila([
+            const Divider(height: 24),
+            _fila([
+              _campo('Nombre completo', r.nombre, validator: _req),
+              _campo(
+                'Correo',
+                r.correo,
+                validator: _emailVal,
+                keyboardType: TextInputType.emailAddress,
+              ),
+            ]),
+            _fila([
+              _campo(
+                'RFC',
+                r.rfc,
+                validator: _rfcVal,
+                maxLength: 13,
+                capitalization: TextCapitalization.characters,
+              ),
+              _campo(
+                'CURP',
+                r.curp,
+                validator: _curpVal,
+                maxLength: 18,
+                capitalization: TextCapitalization.characters,
+              ),
+            ]),
             _campo(
               'WhatsApp',
               r.whatsapp,
@@ -256,9 +379,41 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
               keyboardType: TextInputType.phone,
               formatters: [FilteringTextInputFormatter.digitsOnly],
             ),
-          ]),
-        ],
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _campoColonia() {
+    if (_colonias.isEmpty) {
+      return _campo(
+        'Colonia',
+        _coloniaCtrl,
+        validator: _req,
+        hint: _domicilioManual ? 'Escribe tu colonia' : 'Se llena con el CP',
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          value: _coloniaSel,
+          isExpanded: true,
+          decoration: _inputDecoration(label: 'Colonia'),
+          items: _colonias
+              .map((c) => DropdownMenuItem<String>(value: c, child: Text(c)))
+              .toList(),
+          onChanged: (v) {
+            setState(() {
+              _coloniaSel = v;
+              _coloniaCtrl.text = v ?? '';
+            });
+          },
+          validator: (v) =>
+              (v == null || v.isEmpty) ? 'Selecciona una colonia' : null,
+        ),
+      ],
     );
   }
 
@@ -285,54 +440,147 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
 
   Widget _archivoPicker(String label, String key) {
     final archivo = _archivos[key];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label),
-        const SizedBox(height: 6),
-        OutlinedButton.icon(
-          onPressed: () => _elegirArchivo(key),
-          icon: const Icon(Icons.upload_outlined, size: 18),
-          label: const Text('Seleccionar archivo'),
+    final tieneArchivo = archivo != null;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: tieneArchivo ? const Color(0xFFE8F5E9) : Colors.white,
+        border: Border.all(
+          color: tieneArchivo ? Colors.green.shade300 : OCColors.cardBorder,
         ),
-        if (archivo != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                tieneArchivo ? Icons.check_circle : Icons.upload_file,
+                color: tieneArchivo ? Colors.green : OCColors.mediumBlue,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: tieneArchivo
+                        ? Colors.green.shade800
+                        : OCColors.darkBlue,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (tieneArchivo)
+            Text(
               archivo.name,
-              style: const TextStyle(fontSize: 12, color: Colors.green),
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            )
+          else
+            Text(
+              'No seleccionado',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: () => _elegirArchivo(key),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(
+                  color: tieneArchivo ? Colors.green : OCColors.mediumBlue,
+                ),
+                foregroundColor: tieneArchivo
+                    ? Colors.green
+                    : OCColors.mediumBlue,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(tieneArchivo ? 'Cambiar archivo' : 'Subir archivo'),
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _fotosPicker() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Fotografías de las Instalaciones'),
-        const SizedBox(height: 6),
-        OutlinedButton.icon(
-          onPressed: _elegirFotos,
-          icon: const Icon(Icons.upload_outlined, size: 18),
-          label: const Text('Seleccionar fotografías'),
+    final hayFotos = _fotos.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: hayFotos ? const Color(0xFFE8F5E9) : Colors.white,
+        border: Border.all(
+          color: hayFotos ? Colors.green.shade300 : OCColors.cardBorder,
         ),
-        if (_fotos.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hayFotos
+                    ? Icons.photo_library
+                    : Icons.add_photo_alternate_outlined,
+                color: hayFotos ? Colors.green : OCColors.mediumBlue,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Fotografías de las Instalaciones',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: hayFotos ? Colors.green.shade800 : OCColors.darkBlue,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (hayFotos)
+            Text(
               '${_fotos.length} fotografía(s) seleccionada(s)',
-              style: const TextStyle(fontSize: 12, color: Colors.green),
+              style: const TextStyle(fontSize: 12),
+            )
+          else
+            Text(
+              'Mínimo 1 foto requerida',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _elegirFotos,
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(
+                  color: hayFotos ? Colors.green : OCColors.mediumBlue,
+                ),
+                foregroundColor: hayFotos ? Colors.green : OCColors.mediumBlue,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                hayFotos ? 'Cambiar fotografías' : 'Seleccionar fotografías',
+              ),
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 
   // ---------- Envío ----------
-  /// Agrega al multipart los datos de un representante como
-  /// `contacts[tipo][campo]`, omitiendo los vacíos.
   void _agregarContacto(FormData form, String tipo, _RepCtrl r) {
     final campos = {
       'full_name': r.nombre.text.trim(),
@@ -349,7 +597,6 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
   MultipartFile _archivo(PlatformFile f) =>
       MultipartFile.fromBytes(f.bytes!, filename: f.name);
 
-  /// Arma el multipart que espera `POST /public/register/oc`.
   FormData _construirFormData() {
     final form = FormData();
     void campo(String k, String v) {
@@ -384,7 +631,8 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
       'convenio': 'conocer_agreement',
     };
     claves.forEach((local, remota) {
-      form.files.add(MapEntry(remota, _archivo(_archivos[local]!)));
+      if (_archivos[local] != null)
+        form.files.add(MapEntry(remota, _archivo(_archivos[local]!)));
     });
     for (final foto in _fotos) {
       form.files.add(MapEntry('facility_photos[]', _archivo(foto)));
@@ -392,7 +640,6 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
     return form;
   }
 
-  /// Extrae el mensaje del envelope de error de la API (message / errors).
   String _mensajeError(Response<dynamic> res) {
     final body = res.data;
     if (body is Map) {
@@ -430,7 +677,8 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
       );
       if (!mounted) return;
 
-      final ok = res.statusCode != null &&
+      final ok =
+          res.statusCode != null &&
           res.statusCode! >= 200 &&
           res.statusCode! < 300;
       if (!ok) {
@@ -458,18 +706,29 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
     }
   }
 
-  void _aviso(String texto) => ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(texto)));
+  void _aviso(String texto) => ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(texto),
+      backgroundColor: OCColors.darkBlue,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ),
+  );
 
-  // ---------- UI ----------
+  // ---------- UI Principal ----------
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F9FA),
-      appBar: AppBar(title: const Text('Acreditar Organismo (OC)')),
+      backgroundColor: OCColors.bgLight,
+      appBar: AppBar(
+        backgroundColor: OCColors.darkBlue,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text(
+          'Acreditar Organismo (OC)',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+      ),
       body: Form(
         key: _formKey,
         child: SingleChildScrollView(
@@ -477,169 +736,52 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 900),
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Encabezado
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFE6F0F3),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(Icons.shield_outlined, color: primary),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Acreditar Organismo (OC)',
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                'Envía la solicitud de registro de tu OC',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.black54,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header Card
+                  Card(
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
                     ),
-                    const SizedBox(height: 24),
-
-                    // Datos legales
-                    _titulo('Datos legales'),
-                    _fila([
-                      _campo(
-                        'Razón Social (Nombre Legal)',
-                        _razonSocialCtrl,
-                        hint: 'Ej. Instituto Certificador de Competencias',
-                        validator: _req,
-                      ),
-                      _campo(
-                        'Nombre Comercial',
-                        _nombreComercialCtrl,
-                        hint: 'Ej. Certifica MX',
-                        validator: _req,
-                      ),
-                    ]),
-                    _fila([
-                      _campo(
-                        'RFC',
-                        _rfcCtrl,
-                        hint: 'RFC CON HOMOCLAVE (12 O 13 CARACTERES)',
-                        validator: _rfcVal,
-                        maxLength: 13,
-                        capitalization: TextCapitalization.characters,
-                      ),
-                      _campo(
-                        'Nombre del Administrador del OC',
-                        _adminNombreCtrl,
-                        hint: 'Ej. Ing. Carlos Salinas',
-                        validator: _req,
-                      ),
-                    ]),
-                    _fila([
-                      _campo(
-                        'Correo del Administrador (Email OC)',
-                        _adminCorreoCtrl,
-                        hint: 'carlos.salinas@tu-oc.com',
-                        validator: _emailVal,
-                        keyboardType: TextInputType.emailAddress,
-                      ),
-                    ]),
-
-                    const Divider(height: 32),
-
-                    // Domicilio
-                    _titulo('Domicilio'),
-                    _fila([
-                      _campo('Calle', _calleCtrl, validator: _req),
-                      _campo('Número exterior', _numExtCtrl, validator: _req),
-                      _campo('Número interior', _numIntCtrl),
-                    ], columnas: 3),
-                    _fila([
-                      _campo(
-                        'Código postal',
-                        _cpCtrl,
-                        validator: _req,
-                        maxLength: 5,
-                        keyboardType: TextInputType.number,
-                        formatters: [FilteringTextInputFormatter.digitsOnly],
-                        suffixIcon: const Icon(Icons.location_on_outlined),
-                      ),
-                      _campo('Colonia', _coloniaCtrl, validator: _req),
-                      _campo('Localidad', _localidadCtrl, validator: _req),
-                    ], columnas: 3),
-                    _fila([
-                      _campo(
-                        'Municipio / alcaldía',
-                        _municipioCtrl,
-                        validator: _req,
-                      ),
-                      _campo('Estado', _estadoCtrl, validator: _req),
-                    ], columnas: 3),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      value: _domicilioManual,
-                      onChanged: (v) =>
-                          setState(() => _domicilioManual = v ?? false),
-                      title: const Text(
-                        'No encuentro mi localidad: capturar el domicilio manualmente',
-                      ),
-                    ),
-
-                    const Divider(height: 32),
-
-                    // Representantes
-                    _titulo('Representantes'),
-                    const Text(
-                      'Registra a las tres personas responsables del OC. El número de WhatsApp se usa para notificarles el avance de la solicitud.',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE3F2FD),
-                        border: Border.all(color: const Color(0xFF90CAF9)),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Row(
                         children: [
-                          Icon(Icons.info, color: Color(0xFF1677FF)),
-                          SizedBox(width: 12),
-                          Expanded(
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: OCColors.mediumBlue.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.shield_outlined,
+                              color: OCColors.mediumBlue,
+                              size: 32,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          const Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Credenciales de administrador',
-                                  style: TextStyle(fontSize: 16),
+                                  'Solicitud de Registro',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: OCColors.darkBlue,
+                                  ),
                                 ),
-                                SizedBox(height: 6),
+                                SizedBox(height: 4),
                                 Text(
-                                  'Si la solicitud es aprobada, las credenciales de administrador se enviarán al Correo del Administrador y al correo del Representante técnico. El identificador para iniciar sesión será siempre el Correo del Administrador.',
+                                  'Completa la información para acreditar tu Organismo Certificador ante CONOCER.',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.black54,
+                                    height: 1.4,
+                                  ),
                                 ),
                               ],
                             ),
@@ -647,137 +789,332 @@ class _RegistroOcScreenState extends State<RegistroOcScreen> {
                         ],
                       ),
                     ),
-                    _representante('Director general', _director),
-                    _representante('Representante legal', _legal),
-                    _representante('Representante técnico', _tecnico),
+                  ),
+                  const SizedBox(height: 24),
 
-                    const Divider(height: 32),
-
-                    // Expediente documental
-                    _titulo('Expediente documental'),
-                    _fila([
-                      _archivoPicker('Acta Constitutiva', 'acta'),
-                      _archivoPicker('Poder del Representante Legal', 'poder'),
-                    ]),
-                    _fila([
-                      _archivoPicker(
-                        'Constancia de Situación Fiscal (CSF)',
-                        'csf',
-                      ),
-                      _archivoPicker(
-                        'Convenio vigente con CONOCER',
-                        'convenio',
-                      ),
-                    ]),
-                    _fila([_fotosPicker()]),
-
-                    const SizedBox(height: 16),
-
-                    // Términos
-                    Container(
+                  // 1. Datos Legales
+                  _seccionTitulo('1. Datos Legales', Icons.business),
+                  Card(
+                    elevation: 1,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: OCColors.cardBorder),
+                    ),
+                    child: Padding(
                       padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFAFAFA),
-                        border: Border.all(color: Colors.grey.shade300),
-                        borderRadius: BorderRadius.circular(10),
+                      child: Column(
+                        children: [
+                          _fila([
+                            _campo(
+                              'Razón Social',
+                              _razonSocialCtrl,
+                              hint: 'Nombre Legal',
+                              validator: _req,
+                            ),
+                            _campo(
+                              'Nombre Comercial',
+                              _nombreComercialCtrl,
+                              hint: 'Ej. Certifica MX',
+                              validator: _req,
+                            ),
+                          ]),
+                          _fila([
+                            _campo(
+                              'RFC',
+                              _rfcCtrl,
+                              hint: 'Con Homoclave',
+                              validator: _rfcVal,
+                              maxLength: 13,
+                              capitalization: TextCapitalization.characters,
+                            ),
+                            _campo(
+                              'Admin. del OC',
+                              _adminNombreCtrl,
+                              hint: 'Nombre completo',
+                              validator: _req,
+                            ),
+                          ]),
+                          _campo(
+                            'Correo Admin',
+                            _adminCorreoCtrl,
+                            hint: 'correo@ejemplo.com',
+                            validator: _emailVal,
+                            keyboardType: TextInputType.emailAddress,
+                          ),
+                        ],
                       ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // 2. Domicilio
+                  _seccionTitulo('2. Domicilio Fiscal', Icons.location_on),
+                  Card(
+                    elevation: 1,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: OCColors.cardBorder),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          _fila([
+                            _campo('Calle', _calleCtrl, validator: _req),
+                            _campo('No. Ext', _numExtCtrl, validator: _req),
+                            _campo('No. Int', _numIntCtrl),
+                          ], columnas: 3),
+                          _fila([
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _campo(
+                                  'Código Postal',
+                                  _cpCtrl,
+                                  validator: _req,
+                                  maxLength: 5,
+                                  keyboardType: TextInputType.number,
+                                  formatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  suffixIcon: _buscandoCp
+                                      ? const Padding(
+                                          padding: EdgeInsets.all(12),
+                                          child: SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          ),
+                                        )
+                                      : const Icon(Icons.search, size: 20),
+                                ),
+                                if (_cpError != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      top: 4,
+                                      left: 12,
+                                    ),
+                                    child: Text(
+                                      _cpError!,
+                                      style: const TextStyle(
+                                        color: Colors.red,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            _campoColonia(),
+                            _campo(
+                              'Localidad',
+                              _localidadCtrl,
+                              validator: _req,
+                            ),
+                          ], columnas: 3),
+                          _fila([
+                            _campo(
+                              'Municipio',
+                              _municipioCtrl,
+                              validator: _req,
+                            ),
+                            _campo('Estado', _estadoCtrl, validator: _req),
+                          ], columnas: 2),
+
+                          CheckboxListTile(
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                            activeColor: OCColors.mediumBlue,
+                            value: _domicilioManual,
+                            onChanged: (v) {
+                              setState(() => _domicilioManual = v ?? false);
+                              if (_domicilioManual) {
+                                _limpiarDatosCp();
+                              } else {
+                                final cp = _cpCtrl.text.trim();
+                                if (cp.length == 5) _buscarCp(cp);
+                              }
+                            },
+                            title: const Text(
+                              'Capturar domicilio manualmente',
+                              style: TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // 3. Representantes
+                  _seccionTitulo('3. Representantes', Icons.people),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: OCColors.cyan.withOpacity(0.15),
+                      border: Border.all(color: OCColors.cyan.withOpacity(0.5)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, color: OCColors.mediumBlue),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Las credenciales de administrador se enviarán al correo del Administrador y del Representante Técnico si la solicitud es aprobada.',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: OCColors.darkBlue,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _representante('Director General', _director),
+                  _representante('Representante Legal', _legal),
+                  _representante('Representante Técnico', _tecnico),
+
+                  const SizedBox(height: 24),
+
+                  // 4. Expediente
+                  _seccionTitulo('4. Expediente Documental', Icons.folder_open),
+                  Card(
+                    elevation: 1,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: OCColors.cardBorder),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          _fila([
+                            _archivoPicker('Acta Constitutiva', 'acta'),
+                            _archivoPicker('Poder Legal', 'poder'),
+                          ]),
+                          _fila([
+                            _archivoPicker(
+                              'Constancia Situación Fiscal',
+                              'csf',
+                            ),
+                            _archivoPicker('Convenio CONOCER', 'convenio'),
+                          ]),
+                          const SizedBox(height: 16),
+                          _fotosPicker(),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // Términos y Botón
+                  Card(
+                    elevation: 1,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: OCColors.cardBorder),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Checkbox(
-                                value: _aceptaTerminos,
-                                onChanged: (v) => setState(
-                                  () => _aceptaTerminos = v ?? false,
+                          CheckboxListTile(
+                            title: RichText(
+                              text: TextSpan(
+                                style: const TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 14,
                                 ),
-                              ),
-                              Expanded(
-                                child: Wrap(
-                                  children: [
-                                    const Text('He leído y acepto los '),
-                                    InkWell(
-                                      onTap: () {
-                                        /* abrir Términos */
-                                      },
-                                      child: Text(
-                                        'Términos y Condiciones',
-                                        style: TextStyle(
-                                          color: primary,
-                                          fontWeight: FontWeight.bold,
-                                          decoration: TextDecoration.underline,
-                                        ),
-                                      ),
+                                children: [
+                                  const TextSpan(
+                                    text: 'He leído y acepto los ',
+                                  ),
+                                  TextSpan(
+                                    text: 'Términos y Condiciones',
+                                    style: const TextStyle(
+                                      color: OCColors.mediumBlue,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.underline,
                                     ),
-                                    const Text(' y el '),
-                                    InkWell(
-                                      onTap: () {
-                                        /* abrir Aviso */
-                                      },
-                                      child: Text(
-                                        'Aviso de Privacidad',
-                                        style: TextStyle(
-                                          color: primary,
-                                          fontWeight: FontWeight.bold,
-                                          decoration: TextDecoration.underline,
-                                        ),
-                                      ),
+                                  ),
+                                  const TextSpan(text: ' y el '),
+                                  TextSpan(
+                                    text: 'Aviso de Privacidad',
+                                    style: const TextStyle(
+                                      color: OCColors.mediumBlue,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.underline,
                                     ),
-                                    const Text('.'),
-                                  ],
-                                ),
+                                  ),
+                                  const TextSpan(text: '.'),
+                                ],
                               ),
-                            ],
+                            ),
+                            value: _aceptaTerminos,
+                            activeColor: OCColors.mediumBlue,
+                            onChanged: (v) =>
+                                setState(() => _aceptaTerminos = v ?? false),
+                            controlAffinity: ListTileControlAffinity.leading,
+                            contentPadding: EdgeInsets.zero,
                           ),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 12, top: 4),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: ElevatedButton(
+                              onPressed: _enviando ? null : _enviar,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: OCColors.mediumBlue,
+                                disabledBackgroundColor: Colors.grey.shade400,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: _enviando
+                                  ? const SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 3,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text(
+                                      'ENVIAR SOLICITUD',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 1,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Center(
                             child: Text(
-                              'Para acreditar tu consentimiento registramos la fecha, la versión de los documentos aceptados, tu dirección IP y el navegador desde el que aceptaste.',
+                              'Al enviar, registraremos tu IP y fecha de aceptación.',
                               style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.black54,
+                                fontSize: 11,
+                                color: Colors.grey.shade500,
                               ),
                             ),
                           ),
                         ],
                       ),
                     ),
-
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 44,
-                      child: ElevatedButton(
-                        onPressed: _enviando ? null : _enviar,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1677FF),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: _enviando
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text('Enviar Solicitud'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Center(
-                      child: Text(
-                        'No se generan credenciales al enviar la solicitud. Las recibirás únicamente si el registro es aprobado.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12, color: Colors.black54),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
               ),
             ),
           ),

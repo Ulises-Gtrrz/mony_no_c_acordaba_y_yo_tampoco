@@ -91,7 +91,7 @@ class _EvaluadorScreenState extends State<EvaluadorScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         title: const Text(
-          'Gestión de Candidatos pta',
+          'Gestión de Candidatos',
           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
         ),
         actions: [
